@@ -10,12 +10,7 @@ DCF modeling, LBO analysis, comparable company analysis, and market data retriev
 Skills framework and example skills are based on Anthropic's original work.
 Original skills repository: https://github.com/anthropics/claude-skills (verify this URL)
 
-## Getting Started
-
-\```bash
-npm install
-\```
-
+##Tool reference table
 ---
 
 ## 数据源说明 / Data Source Reference

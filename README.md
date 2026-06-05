@@ -1,160 +1,291 @@
-# Finance MCP
+# Finance MCP — Claude Desktop
 
-A finance-focused Model Context Protocol (MCP) server built on top of Anthropic's skills framework.
+Investment Banking & Equity Research toolkit for Claude Desktop.
+Modeled on **[anthropics/financial-services](https://github.com/anthropics/financial-services)** architecture.
 
-This project leverages Claude's skill system to provide financial analysis capabilities including 
-DCF modeling, LBO analysis, comparable company analysis, and market data retrieval.
-
-## Credits
-
-Skills framework and example skills are based on Anthropic's original work.
-Original skills repository: https://github.com/anthropics/claude-skills (verify this URL)
-
-##Tool reference table
 ---
 
-## 数据源说明 / Data Source Reference
+## Architecture
 
-| English | 中文 | Tool |
+Three MCP servers work together in Claude Desktop:
+
+```
+finance-mcp/
+├── server.js                              ← IB & Equity Research tools (Node.js)
+├── services/
+│   ├── market-data/
+│   │   ├── server.py                      ← Live market data (Python)
+│   │   └── DATA_SOURCES.md               ← Notes on yfinance, AKShare & THS scraper
+│   └── portfolio/
+│       └── server.py                      ← Analysis log & position tracking (Python)
+├── utils/
+│   └── formatting.py                      ← Shared formatting helpers (imported by market-data)
+├── skills/                                ← SKILL.md files for each IB/ER tool
+│   ├── competitive-analysis/
+│   ├── comps-table/
+│   ├── dcf-model/
+│   ├── earnings-snapshot/
+│   ├── football-field/
+│   ├── ic-memo/
+│   ├── lbo-model/
+│   ├── merger-accretion-dilution/
+│   ├── one-pager/
+│   ├── pitch-deck/
+│   └── wacc-calculator/
+├── README.md
+└── package.json
+```
+
+---
+
+## Tool Directory
+
+### 📊 Live Market Data — `services/market-data/server.py`
+
+#### Data Source Reference
+| Tool | Description |
+|---|---|
+| `data_sources` | Full explanation of yfinance, AKShare, and the THS scraper — what each covers, limitations, and when to use each |
+
+#### yfinance Tools — Global Markets (US, EU, HK)
+> Free · No API key · Unofficial Yahoo Finance wrapper · Personal/research use only
+> ⚠️ Subject to Yahoo rate limits. If a call fails, fall back to `web_search` for the price.
+
+| Tool | Description |
+|---|---|
+| `yf_quote` | Live quote, valuation multiples, margins, analyst target for any global ticker |
+| `yf_financials` | Income statement, balance sheet, or cash flow (annual or quarterly) |
+| `yf_price_history` | Historical OHLCV prices with period and interval selection |
+| `yf_peers_comps` | Pull multiples for a list of tickers simultaneously — feeds directly into `comps_table`. ⚠️ Does not normalise currencies across markets |
+| `yf_analyst_estimates` | Consensus EPS, revenue estimates, price targets, buy/hold/sell recommendation |
+| `yf_earnings_calendar` | Next earnings date and recent actuals vs. estimates |
+
+#### AKShare Tools — China Markets (Macro, Indexes, Sector PE)
+> Free · No API key · Open-source · Research use only
+
+| Tool | Status | Description |
 |---|---|---|
-| Explain the data sources | 解释数据来源 | `data_sources` |
+| `ak_a_share_financials` | ✅ Works | Multi-year financial statements from CSRC filings via Tonghuashun |
+| `ak_macro_china` | ✅ Works | GDP, CPI, PPI, M2, PMI, retail sales, industrial output, trade balance |
+| `ak_index_quote` | ✅ Works | CSI 300, CSI 500, SSE, SZSE, ChiNext, STAR Market levels |
+| `ak_sector_pe` | ✅ Works | Current sector P/E ratios for Shanghai or Shenzhen exchange |
+| ~~`ak_a_share_quote`~~ | ❌ Disabled | Blocked by MCP proxy (push2.eastmoney.com → ProxyError). Use `ak_a_share_quote_ths` instead |
+| ~~`ak_a_share_history`~~ | ❌ Disabled | Blocked by MCP proxy (push2his.eastmoney.com → ProxyError). Handler preserved in code for future re-enabling |
+
+#### Tonghuashun Scraper — A-Share Fundamentals (10jqka.com.cn)
+> Scrapes Tonghuashun directly. Not blocked by MCP proxy. ✅
+
+| Tool | Description |
+|---|---|
+| `ak_a_share_quote_ths` | Fetches EPS, NAV/share, net profit, revenue, profit growth, analyst consensus (last 60 trading days), recent block trades, and margin balance data for any A-share. **Does not return live intraday price** — use `web_search("600519 股价 今日")` for that |
 
 ---
 
-## yfinance — 全球市场 / Global Markets
+### 📁 Portfolio & Analysis Log — `services/portfolio/server.py`
 
-| English | 中文 | Tool |
+Persistent local storage for analysis conclusions, position tracking, and cost basis.
+Zero dependency on market data — reads/writes a local `analysis_log.json` file.
+Log path is overridable via the `PORTFOLIO_LOG_PATH` environment variable.
+
+| Tool | When to Call | Description |
 |---|---|---|
-| Get me a live quote for AAPL | 获取苹果公司实时报价 | `yf_quote` |
-| Show me annual income statement for MSFT | 显示微软年度损益表 | `yf_financials` |
-| Show me quarterly balance sheet for GOOGL | 显示谷歌季度资产负债表 | `yf_financials` |
-| Show me 1 year price history for TSLA | 显示特斯拉一年价格历史 | `yf_price_history` |
-| Pull live multiples for CRM, NOW, WDAY | 获取CRM、NOW、WDAY的实时估值倍数 | `yf_peers_comps` |
-| Get analyst estimates for NVDA | 获取英伟达分析师预测 | `yf_analyst_estimates` |
-| When does Apple report earnings | 苹果公司下次财报发布日期 | `yf_earnings_calendar` |
+| `analysis_log_read` | **Start** of every analysis session | Retrieve prior conclusion, cost basis, stop loss, position type for a stock. Omit symbol to get full portfolio summary |
+| `analysis_log_save` | **End** of every analysis session | Persist conclusion, price at analysis, cost basis, position type (底仓/卫星仓/观察/空仓), stop loss, target price, and notes |
+| `analysis_log_delete` | When a position is closed | Remove a stock from the log |
+
+Entries carry `schema_version` for forward-compatible migrations as new fields are added.
 
 ---
 
-## AKShare — 中国市场 / China Markets
+### 🏦 IB & Equity Research Tools — `server.js`
 
-| English | 中文 | Tool |
+#### Competitive Intelligence
+| Tool | Description |
+|---|---|
+| `competitive_analysis` | Strategic landscape: market structure, moats, growth quality, disruption risk |
+
+#### Equity Research
+| Tool | Slash | Description |
 |---|---|---|
-| Get me a quote for BYD, symbol 002594 | 获取比亚迪实时报价，代码002594 | `ak_a_share_quote` |
-| Show me 6 months price history for Moutai 600519 | 显示茅台六个月价格历史，代码600519 | `ak_a_share_history` |
-| Get financials for CATL, symbol 300750 | 获取宁德时代财务数据，代码300750 | `ak_a_share_financials` |
-| Show me China CPI data | 显示中国CPI数据 | `ak_macro_china` |
-| Show me China GDP data | 显示中国GDP数据 | `ak_macro_china` |
-| Show me China manufacturing PMI | 显示中国制造业PMI | `ak_macro_china` |
-| Show me China M2 money supply | 显示中国M2货币供应量 | `ak_macro_china` |
-| Show me China PPI data | 显示中国PPI数据 | `ak_macro_china` |
-| Show me China retail sales | 显示中国零售销售数据 | `ak_macro_china` |
-| Show me China trade balance | 显示中国贸易差额 | `ak_macro_china` |
-| What is the CSI 300 at | 沪深300指数现在是多少 | `ak_index_quote` |
-| Show me the SSE composite index | 显示上证综合指数 | `ak_index_quote` |
-| Show me ChiNext index | 显示创业板指数 | `ak_index_quote` |
-| Show me STAR Market index | 显示科创50指数 | `ak_index_quote` |
-| Show me sector P/E for Shanghai exchange | 显示上交所各行业市盈率 | `ak_sector_pe` |
-| Show me sector P/E for Shenzhen exchange | 显示深交所各行业市盈率 | `ak_sector_pe` |
+| `comps_table` | /comps | Trading comps table with mean/median benchmarks |
+| `dcf_model` | /dcf | 5-year DCF + WACC × terminal growth sensitivity |
+| `earnings_snapshot` | /earnings | Beat/miss analysis + guidance + investor questions |
+| `one_pager` | /one-pager | Company tearsheet / profile |
 
----
-
-## 竞争分析 / Competitive Intelligence
-
-| English | 中文 | Tool |
+#### Investment Banking
+| Tool | Slash | Description |
 |---|---|---|
-| Analyze the competitive landscape for cloud infrastructure | 分析云计算基础设施的竞争格局 | `competitive_analysis` |
-| Competitive analysis of Chinese EV makers, deep dive | 深度分析中国电动车行业竞争格局 | `competitive_analysis` |
-| Brief competitive overview of the SaaS sector | 简要分析SaaS行业竞争概况 | `competitive_analysis` |
+| `pitch_deck_outline` | /pitch | Full pitch scaffold (M&A, IPO, Debt, Restructuring) |
+| `merger_accretion_dilution` | /merger-ad | EPS accretion/dilution analysis |
+| `lbo_model` | /lbo | IRR / MOIC returns matrix across exit multiples |
+| `ic_memo_template` | /ic-memo | Investment Committee memo template |
+
+#### Utilities
+| Tool | Description |
+|---|---|
+| `wacc_calculator` | WACC from CAPM + after-tax cost of debt |
+| `football_field` | Valuation range across methodologies |
+| `list_tools` | Lists all IB/ER tools |
 
 ---
 
-## 股票研究 / Equity Research
+## Data Sources
 
-| English | 中文 | Tool |
-|---|---|---|
-| Build a comps table for Salesforce vs peers | 建立Salesforce与同行的可比公司分析表 | `comps_table` |
-| Run a DCF on a SaaS company | 对SaaS公司进行DCF估值分析 | `dcf_model` |
-| Earnings snapshot for Apple Q1 2025 | 生成苹果2025年第一季度财报快照 | `earnings_snapshot` |
-| Give me a one-pager on Tesla | 生成特斯拉一页纸公司简报 | `one_pager` |
+| | yfinance | AKShare | THS Scraper |
+|---|---|---|---|
+| Coverage | Global (US, EU, HK, JP…) | China macro, indexes, sector PE | China A-share fundamentals |
+| API key | ❌ None | ❌ None | ❌ None |
+| Cost | Free | Free | Free |
+| Live price | ✅ (rate-limited) | ❌ Eastmoney blocked | ❌ JS-rendered, not captured |
+| Financials | ✅ Global | ✅ CSRC filings | ✅ THS page |
+| Best for | US/EU/HK research | Macro context, index levels | A-share fundamentals + analyst data |
 
----
-
-## 投资银行 / Investment Banking
-
-| English | 中文 | Tool |
-|---|---|---|
-| Build a sell-side M&A pitch for a SaaS company | 为SaaS公司建立出售方并购推介材料 | `pitch_deck_outline` |
-| Build a buy-side M&A pitch | 建立买方并购推介材料 | `pitch_deck_outline` |
-| Build an IPO pitch for a fintech company | 为金融科技公司建立IPO推介材料 | `pitch_deck_outline` |
-| Run an LBO on a company with $1.2B EV | 对企业价值12亿美元的公司进行LBO分析 | `lbo_model` |
-| Merger accretion dilution analysis | 并购摊薄增厚分析 | `merger_accretion_dilution` |
-| Generate an IC memo for a growth equity deal | 生成成长型股权投资的投委会备忘录 | `ic_memo_template` |
+**For live A-share price:** use `web_search("600519 股价 今日")` — fastest and most reliable.
 
 ---
 
-## 工具类 / Utilities
+## Recommended Session Flow — A-Share Analysis
 
-| English | 中文 | Tool |
-|---|---|---|
-| Calculate WACC for a tech company | 计算科技公司的加权平均资本成本 | `wacc_calculator` |
-| Build a football field valuation | 建立橄榄球场估值区间图 | `football_field` |
-| List all available finance tools | 列出所有可用的金融工具 | `list_tools` |
+```
+SESSION START
+  1. analysis_log_read(symbol)        ← check prior conclusion, cost basis, stop loss
+  2. ak_a_share_quote_ths(symbol)     ← fundamentals, analyst ratings, block trades, margin
+  3. ak_a_share_financials(symbol)    ← multi-year CSRC filing data
+  4. web_search("symbol 股价 今日")    ← live intraday price
 
----
-
-## 🔗 组合使用 / Power Combos
-
-| English | 中文 | Tools |
-|---|---|---|
-| Pull live multiples then build a comps table | 获取实时倍数后建立可比公司分析表 | `yf_peers_comps` → `comps_table` |
-| Get financials then run a DCF | 获取财务数据后进行DCF分析 | `yf_financials` → `dcf_model` |
-| Get BYD quote then write a one-pager | 获取比亚迪报价后生成公司简报 | `ak_a_share_quote` → `one_pager` |
-| Show China macro data then write investment thesis | 显示中国宏观数据后撰写投资逻辑 | `ak_macro_china` → analysis |
-| Pull earnings data then build earnings snapshot | 获取财报数据后生成财报快照 | `yf_earnings_calendar` + `yf_analyst_estimates` → `earnings_snapshot` |
-| Cross-border comps — China vs US | 跨境可比公司分析——中美对比 | `ak_a_share_quote` + `yf_peers_comps` → `comps_table` |
+SESSION END
+  5. analysis_log_save(symbol, ...)   ← persist today's conclusion
+```
 
 ---
 
-## 常用A股代码 / Common A-Share Codes
+## Installation
+
+### 1. Install Node.js dependencies
+```bash
+cd ~/Desktop/mcp-servers/finance-mcp
+npm install
+```
+
+### 2. Install Python dependencies
+```bash
+pip install yfinance akshare mcp
+```
+
+### 3. Configure Claude Desktop
+
+Open `~/Library/Application Support/Claude/claude_desktop_config.json` and add all three servers:
+
+```json
+{
+  "mcpServers": {
+    "finance-mcp": {
+      "command": "node",
+      "args": ["/Users/YOUR_USERNAME/Desktop/mcp-servers/finance-mcp/server.js"]
+    },
+    "finance-market-data": {
+      "command": "python3",
+      "args": ["/Users/YOUR_USERNAME/Desktop/mcp-servers/finance-mcp/services/market-data/server.py"]
+    },
+    "finance-portfolio": {
+      "command": "python3",
+      "args": ["/Users/YOUR_USERNAME/Desktop/mcp-servers/finance-mcp/services/portfolio/server.py"]
+    }
+  }
+}
+```
+
+Replace `YOUR_USERNAME` with your macOS username.
+
+### 4. Restart Claude Desktop
+
+---
+
+## Example Workflows
+
+### A-share deep dive with session memory
+```
+分析贵州茅台 (600519)，结合近期走势给出投资建议
+```
+Claude will: `analysis_log_read(600519)` → `ak_a_share_quote_ths` → `ak_a_share_financials` → `web_search` for price → analysis → `analysis_log_save`
+
+### Auto-populate a comps table from live data
+```
+Pull live multiples for CRM, NOW, WDAY — then build a comps table.
+```
+Claude will: `yf_peers_comps` → `comps_table`
+
+### DCF with live inputs
+```
+Pull the latest financials for MSFT and run a DCF.
+Use 10% WACC and 2.5% terminal growth.
+```
+Claude will: `yf_quote` + `yf_financials` → `dcf_model`
+
+### China macro context
+```
+Analyse the macro backdrop for Chinese consumer stocks —
+include CPI, retail sales, and PMI.
+```
+Claude will: `ak_macro_china(cpi)` + `ak_macro_china(retail_sales)` + `ak_macro_china(pmi_manufacturing)`
+
+### Cross-border comps
+```
+Build a comps table for a Chinese EV company against BYD, NIO, Li Auto, Tesla, and Rivian.
+```
+Claude will: `ak_a_share_quote_ths` (BYD) + `yf_peers_comps` (NIO, LI, TSLA, RIVN) → `comps_table`
+
+### Portfolio review
+```
+Show me all my tracked stocks and their current conclusions.
+```
+Claude will: `analysis_log_read()` (no symbol — returns full portfolio summary table)
+
+---
+
+## Common A-Share Codes
 
 | Company | 公司 | Symbol |
 |---|---|---|
 | Kweichow Moutai | 贵州茅台 | 600519 |
+| Wuliangye | 五粮液 | 000858 |
 | BYD | 比亚迪 | 002594 |
 | CATL | 宁德时代 | 300750 |
+| Hengrui Medicine | 恒瑞医药 | 600276 |
 | Ping An Insurance | 中国平安 | 601318 |
-| Industrial & Commercial Bank | 工商银行 | 601398 |
 | China Merchants Bank | 招商银行 | 600036 |
-| Alibaba (A-share) | 阿里巴巴 | 688688 |
-| CITIC Securities | 中信证券 | 600030 |
 | Midea Group | 美的集团 | 000333 |
-| Wuliangye | 五粮液 | 000858 |
+| SMIC | 中芯国际 | 688981 |
+| Advanced Micro-Fab (AMEC) | 中微公司 | 688012 |
+| Choho Industrial | 征和工业 | 003033 |
 | LONGi Green Energy | 隆基绿能 | 601012 |
-| Ping An Bank | 平安银行 | 000001 |
+
+## Common Global Tickers
+
+| Company | Ticker |
+|---|---|
+| Apple | AAPL |
+| Microsoft | MSFT |
+| NVIDIA | NVDA |
+| Tencent (HK) | 0700.HK |
+| Alibaba (HK) | 9988.HK |
+| TSMC | TSM |
+| Samsung | 005930.KS |
+| BYD (HK) | 1211.HK |
 
 ---
 
-## 常用全球股票代码 / Common Global Tickers
+## Credits
 
-| Company | 公司 | Ticker |
-|---|---|---|
-| Apple | 苹果 | AAPL |
-| Microsoft | 微软 | MSFT |
-| Google | 谷歌 | GOOGL |
-| Amazon | 亚马逊 | AMZN |
-| Tesla | 特斯拉 | TSLA |
-| NVIDIA | 英伟达 | NVDA |
-| Meta | Meta | META |
-| Salesforce | Salesforce | CRM |
-| ServiceNow | ServiceNow | NOW |
-| Workday | Workday | WDAY |
-| Samsung | 三星 | 005930.KS |
-| TSMC | 台积电 | TSM |
-| Alibaba (US) | 阿里巴巴 (美股) | BABA |
-| Tencent (HK) | 腾讯 (港股) | 0700.HK |
-| BYD (HK) | 比亚迪 (港股) | 1211.HK |
+Skills framework and example skills are based on Anthropic's original work.
+Original skills repository: https://github.com/anthropics/claude-skills
 
 ---
 
-*Finance MCP — Built on anthropics/financial-services architecture*
-*最后更新 / Last updated: May 2026*
+## Disclaimer
+
+> Nothing produced by this server constitutes investment, legal, tax, or accounting advice.
+> Outputs are analytical drafts for review by a qualified professional.
+> Data from yfinance, AKShare, and Tonghuashun is for research purposes only —
+> always verify against audited financials and institutional-grade data sources
+> (Bloomberg, Wind, FactSet) before use in client materials or investment decisions.

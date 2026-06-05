@@ -254,11 +254,6 @@ Claude will: `analysis_log_read()` (no symbol — returns full portfolio summary
 | Hengrui Medicine | 恒瑞医药 | 600276 |
 | Ping An Insurance | 中国平安 | 601318 |
 | China Merchants Bank | 招商银行 | 600036 |
-| Midea Group | 美的集团 | 000333 |
-| SMIC | 中芯国际 | 688981 |
-| Advanced Micro-Fab (AMEC) | 中微公司 | 688012 |
-| Choho Industrial | 征和工业 | 003033 |
-| LONGi Green Energy | 隆基绿能 | 601012 |
 
 ## Common Global Tickers
 
